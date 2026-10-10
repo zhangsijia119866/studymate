@@ -202,6 +202,10 @@ function seed(){
     {id:'g7',name:'跨文化交流英语',credit:2,score:null},
     {id:'g8',name:'人工智能数学基础',credit:2,score:null},
   ];
+  // 课程按线分类：技能线=动手类课程，课本线=理论类课程
+  const courseTrack = {};
+  (typeof COURSE_TYPES!=='undefined' ? COURSE_TYPES.skill : []).forEach(n=>{ courseTrack[n]='skill'; });
+  (typeof COURSE_TYPES!=='undefined' ? COURSE_TYPES.book : []).forEach(n=>{ courseTrack[n]='book'; });
   const roadmap = [
     {stage:'大二（现在）',goals:['过 CET-6','蓝桥杯拿省奖','天梯赛参与','数据结构/离散学扎实','408 数据结构第一轮']},
     {stage:'大三上',goals:['408 系统一轮','数学建模校赛/国赛','六级刷分 500+','做一个完整项目（SpringBoot/小程序）']},
@@ -265,23 +269,30 @@ function todayDayIndex(dateStr){
   return wd === 0 ? 6 : wd - 1;
 }
 // 取某周某天的任务：优先用 dows（自定义星期映射），否则按标准周一~周日
-function taskOfDay(weekObj, dateStr){
-  if(!weekObj || !weekObj.tasks) return '';
+function taskOfDay(weekObj, dateStr, track){
+  if(!weekObj) return '';
+  const arr = track && weekObj[track] ? weekObj[track] : weekObj.tasks;
+  if(!arr) return '';
   const wd = new Date(dateStr + 'T12:00:00').getDay();
   if(Array.isArray(weekObj.dows)){
     const i = weekObj.dows.indexOf(wd);
-    return i >= 0 ? (weekObj.tasks[i] || '') : '';
+    return i >= 0 ? (arr[i] || '') : '';
   }
   const i = wd === 0 ? 6 : wd - 1;
-  return weekObj.tasks[i] || '';
+  return arr[i] || '';
 }
-// 该周每一天的 [日期, 星期名, 任务]
+// 该周每一天的 [日期, 星期名, 技能任务, 课本任务]
 function weekDayRows(weekObj){
   const dates = weekDates(weekObj);
   if(!dates) return [];
   return dates.map(ds=>{
     const wd = new Date(ds + 'T12:00:00').getDay();
-    return { date: ds, wdName: WEEK[wd], wdNum: wd, task: taskOfDay(weekObj, ds) };
+    return {
+      date: ds, wdName: WEEK[wd], wdNum: wd,
+      skill: taskOfDay(weekObj, ds, 'skill'),
+      book: taskOfDay(weekObj, ds, 'book'),
+      task: taskOfDay(weekObj, ds),
+    };
   });
 }
 function weekDates(weekObj){
@@ -303,6 +314,20 @@ function nextKeyDate(){
   const k = up[0];
   const days = Math.ceil((new Date(k.date+'T00:00:00') - new Date(t+'T00:00:00'))/86400000);
   return { ...k, days };
+}
+// 判断某门课属于哪条线
+function courseTrackOf(name){
+  if(typeof COURSE_TYPES === 'undefined') return 'book';
+  if(COURSE_TYPES.skill.includes(name)) return 'skill';
+  return 'book';
+}
+// 某组课程的 GPA
+function trackGpa(list){
+  const g = list.filter(c=>c.score!=null && c.score!=='' && !isNaN(c.score));
+  if(!g.length) return {gpa:'—', credits:list.reduce((a,c)=>a+Number(c.credit||0),0)};
+  const cr = g.reduce((a,c)=>a+Number(c.credit||0),0) || 1;
+  const v = g.reduce((a,c)=>a+gpaPoint(Number(c.score))*Number(c.credit||0),0)/cr;
+  return {gpa:v.toFixed(2), credits:cr};
 }
 
 /* ============ 数据层 ============ */
@@ -409,7 +434,8 @@ function renderToday(v){
   // ===== 计划主体 =====
   let planBlock = '';
   if(wk){
-    const todayTask = taskOfDay(wk, d);
+    const todaySkill = taskOfDay(wk, d, 'skill');
+    const todayBook = taskOfDay(wk, d, 'book');
     const rows = weekDayRows(wk);
     planBlock = `
       <div class="hero">
@@ -424,32 +450,45 @@ function renderToday(v){
         <div class="sub">💡 ${esc(START_HINT)}</div>
       </div>
 
-      <h2>📌 今天（周${wdName}）要做的</h2>
-      <div class="card">
-        <div class="row" style="align-items:flex-start">
-          <div class="chk ${UI._planDone&&UI._planDone[d]?'on':''}" onclick="togglePlanToday('${d}')">${UI._planDone&&UI._planDone[d]?'✓':''}</div>
-          <div class="grow" style="font-size:15px;line-height:1.65">${esc(todayTask||'今天按「每日固定动作」执行即可')}</div>
+      <h2>📌 今天（周${wdName}）两条线</h2>
+
+      <div class="card" style="border-left:4px solid ${TRACK_INFO.skill.color}">
+        <div class="row" style="margin-bottom:8px">
+          <div class="grow"><b style="color:${TRACK_INFO.skill.color}">${TRACK_INFO.skill.icon} 技能线</b>
+          <div class="sub" style="margin-top:2px">${esc(TRACK_INFO.skill.when)}</div></div>
+          <div class="chk ${UI._planDone&&UI._planDone[d+'_skill']?'on':''}" onclick="togglePlanToday('${d}_skill')">${UI._planDone&&UI._planDone[d+'_skill']?'✓':''}</div>
         </div>
-        <div style="margin-top:12px;padding-top:10px;border-top:.5px solid var(--sep)">
-          <div class="sub" style="margin-bottom:6px">🔁 每日固定动作（雷打不动）</div>
-          ${DAILY_CORE.map(c=>`<div class="wtask">
-            <div class="dd">${c.min}′</div>
-            <div class="tx">${esc(c.name)} <span class="sub">· ${esc(c.subject)}</span></div>
-          </div>`).join('')}
-          <div class="sub" style="margin-top:6px;text-align:right">合计约 ${(DAILY_CORE.reduce((a,c)=>a+c.min,0)/60).toFixed(1)} 小时</div>
-        </div>
-        <div class="kb" style="margin-top:12px">
-          <button class="btn" onclick="addTodayCore()">➕ 一键加入今日任务</button>
-          <button class="btn flat" onclick="addPlanTodayAsTask('${d}')">📌 存下今天这条</button>
-        </div>
+        <div style="font-size:15px;line-height:1.6;${UI._planDone&&UI._planDone[d+'_skill']?'color:var(--sub);text-decoration:line-through':''}">${esc(todaySkill||'按下方固定动作执行')}</div>
+        <div class="sub" style="margin-top:8px">🔁 固定动作：${DAILY_SKILL.map(c=>`${esc(c.name)}(${c.min}′)`).join(' · ')}</div>
       </div>
 
-      <h2>📅 本周安排（W${wk.w}）</h2>
+      <div class="card" style="border-left:4px solid ${TRACK_INFO.book.color}">
+        <div class="row" style="margin-bottom:8px">
+          <div class="grow"><b style="color:${TRACK_INFO.book.color}">${TRACK_INFO.book.icon} 课本线</b>
+          <div class="sub" style="margin-top:2px">${esc(TRACK_INFO.book.when)}</div></div>
+          <div class="chk ${UI._planDone&&UI._planDone[d+'_book']?'on':''}" onclick="togglePlanToday('${d}_book')">${UI._planDone&&UI._planDone[d+'_book']?'✓':''}</div>
+        </div>
+        <div style="font-size:15px;line-height:1.6;${UI._planDone&&UI._planDone[d+'_book']?'color:var(--sub);text-decoration:line-through':''}">${esc(todayBook||'按当天课表复习 + 作业')}</div>
+        <div class="sub" style="margin-top:8px">🔁 固定动作：${DAILY_BOOK.map(c=>`${esc(c.name)}(${c.min}′)`).join(' · ')}</div>
+      </div>
+
+      <div class="kb">
+        <button class="btn" onclick="addTodayCore()">➕ 加入今日任务</button>
+        <button class="btn flat" onclick="addPlanTodayAsTask('${d}')">📌 存下今天两条</button>
+      </div>
+
+      <h2>📅 本周双线安排（W${wk.w}）</h2>
       <div class="card">
-        ${rows.map(r=> r.task? `<div class="wtask">
-          <div class="dd">周${r.wdName}</div>
-          <div class="tx" style="${r.date===d?'color:var(--tint);font-weight:600':''}">${esc(r.task)}${r.date===d?' <span class="today-hl">今天</span>':''}</div>
-        </div>`:'').join('')}
+        <div class="row" style="padding-bottom:8px;border-bottom:1px solid var(--sep);margin-bottom:4px">
+          <div class="dd" style="width:34px"></div>
+          <div style="flex:1;font-size:12px;font-weight:700;color:${TRACK_INFO.skill.color}">💻 技能线</div>
+          <div style="flex:1;font-size:12px;font-weight:700;color:${TRACK_INFO.book.color}">📖 课本线</div>
+        </div>
+        ${rows.map(r=>`<div style="display:flex;padding:8px 0;border-bottom:.5px solid var(--sep);${r.date===d?'background:#FFF7E6':''}">
+          <div class="dd" style="width:34px;flex:none;font-size:12px;font-weight:700;color:${r.date===d?'var(--tint)':'var(--sub)'};padding-top:2px">周${r.wdName}</div>
+          <div style="flex:1;padding-right:6px;font-size:13px;line-height:1.5;${r.date===d?'font-weight:600':''}">${esc(r.skill)}</div>
+          <div style="flex:1;font-size:13px;line-height:1.5;color:#1B7A3D">${esc(r.book)}</div>
+        </div>`).join('')}
         <div class="ms">🎯 本周必达线：${esc(wk.must||'—')}</div>
       </div>
 
@@ -520,11 +559,12 @@ window.addTodayCore = ()=>{
 };
 window.addPlanTodayAsTask = (d)=>{
   const wk = planWeekOf(d); if(!wk) return toast('当前不在计划区间');
-  const di = todayDayIndex(d);
-  const txt = wk.tasks && wk.tasks[di];
-  if(!txt) return toast('本周今天没有安排');
-  api.addTask(d, txt, '其他');
-  toast('已加入今日任务');
+  let n = 0;
+  [{track:'skill',sub:'算法'},{track:'book',sub:'其他'}].forEach(x=>{
+    const txt = taskOfDay(wk, d, x.track);
+    if(txt && !api.tasksOn(d).some(t=>t.title===txt)){ api.addTask(d, txt, x.sub); n++; }
+  });
+  toast(n? `已加入 ${n} 条（技能+课本）` : '今天任务已存在');
 };
 function taskRow(t){
   return `<div class="tr">
@@ -650,10 +690,16 @@ function renderPlan(v){
             <span style="color:var(--sub)">${isOpen?'▲':'▼'}</span>
           </div>
           ${isOpen? `<div class="bd">
-            ${rows.map(r=> r.task? `<div class="wtask">
-              <div class="dd">周${r.wdName}</div>
-              <div class="tx" style="${r.date===today()?'color:var(--tint);font-weight:600':''}">${esc(r.task)}${r.date===today()?' <span class="today-hl">今天</span>':''}</div>
-            </div>`:'').join('')}
+            <div class="row" style="padding-bottom:6px;border-bottom:1px solid var(--sep);margin-bottom:4px">
+              <div style="width:34px;flex:none"></div>
+              <div style="flex:1;font-size:12px;font-weight:700;color:${TRACK_INFO.skill.color}">💻 技能线</div>
+              <div style="flex:1;font-size:12px;font-weight:700;color:${TRACK_INFO.book.color}">📖 课本线</div>
+            </div>
+            ${rows.map(r=>`<div style="display:flex;padding:8px 0;border-bottom:.5px solid var(--sep);${r.date===today()?'background:#FFF7E6':''}">
+              <div style="width:34px;flex:none;font-size:12px;font-weight:700;color:${r.date===today()?'var(--tint)':'var(--sub)'};padding-top:2px">周${r.wdName}</div>
+              <div style="flex:1;padding-right:6px;font-size:13px;line-height:1.5;${r.date===today()?'font-weight:600':''}">${esc(r.skill)}</div>
+              <div style="flex:1;font-size:13px;line-height:1.5;color:#1B7A3D">${esc(r.book)}</div>
+            </div>`).join('')}
             <div class="ms">🎯 必达线：${esc(w.must||'—')}</div>
             <div style="margin-top:10px">
               <button class="btn sm flat" onclick="addWeekToTasks(${i})">➕ 本周加入任务</button>
@@ -680,10 +726,28 @@ function renderPlan(v){
           </div>
         </div>`;
       }).join('')}
+      <h2>⚡ 为什么技能和课本要分开</h2>
+      ${['skill','book'].map(k=>{
+        const t = TRACK_INFO[k];
+        return `<div class="card" style="border-left:4px solid ${t.color}">
+          <div class="row"><div class="grow"><b style="color:${t.color};font-size:15px">${t.icon} ${esc(t.name)}</b></div>
+          <span class="tag" style="background:${t.color}">${k==='skill'?'动手练':'理解记'}</span></div>
+          <div style="font-size:13px;margin-top:8px;line-height:1.6">${esc(t.desc)}</div>
+          <div style="font-size:13px;margin-top:8px;line-height:1.7">${t.items.map(x=>'· '+esc(x)).join('<br/>')}</div>
+          <div class="sub" style="margin-top:8px">⏰ ${esc(t.when)}</div>
+        </div>`;
+      }).join('')}
+      <div class="card" style="background:#FFF7E6">
+        <div class="sub">⚠️ 两类混着做会互相干扰：写代码时惦记作业、背概念时想刷题，两边效率都低。<br/>建议固定时段——比如早上 9-11 点整块时间做技能线，晚上 8-9 点课后时间做课本线。</div>
+      </div>
+
       <h2>每日固定动作</h2>
       <div class="card">
-        ${DAILY_CORE.map(c=>`<div class="wtask"><div class="dd">${c.min}′</div><div class="tx">${esc(c.name)} <span class="sub">· ${esc(c.subject)}</span></div></div>`).join('')}
-        <div class="sub" style="margin-top:8px;text-align:right">合计约 ${(DAILY_CORE.reduce((a,c)=>a+c.min,0)/60).toFixed(1)} 小时 / 天</div>
+        <div class="sub" style="margin-bottom:6px;color:var(--tint);font-weight:700">💻 技能线</div>
+        ${DAILY_SKILL.map(c=>`<div class="wtask"><div class="dd">${c.min}′</div><div class="tx">${esc(c.name)} <span class="sub">· ${esc(c.subject)}</span></div></div>`).join('')}
+        <div class="sub" style="margin:12px 0 6px;color:#1B7A3D;font-weight:700">📖 课本线</div>
+        ${DAILY_BOOK.map(c=>`<div class="wtask"><div class="dd">${c.min}′</div><div class="tx">${esc(c.name)} <span class="sub">· ${esc(c.subject)}</span></div></div>`).join('')}
+        <div class="sub" style="margin-top:10px;text-align:right">技能 ${(DAILY_SKILL.reduce((a,c)=>a+c.min,0))}′ + 课本 ${(DAILY_BOOK.reduce((a,c)=>a+c.min,0))}′ ≈ ${((DAILY_SKILL.concat(DAILY_BOOK)).reduce((a,c)=>a+c.min,0)/60).toFixed(1)} 小时</div>
       </div>
       <h2>一周节奏</h2>
       <div class="card">
@@ -744,8 +808,11 @@ window.addWeekToTasks = (i)=>{
   const rows = weekDayRows(w);
   if(!rows.length) return toast('无法解析该周日期');
   let n=0;
-  rows.forEach(r=>{ if(r.task){ api.addTask(r.date, r.task, '其他'); n++; } });
-  toast(`已加入 ${n} 条任务`);
+  rows.forEach(r=>{
+    if(r.skill && !api.tasksOn(r.date).some(t=>t.title===r.skill)){ api.addTask(r.date, r.skill, '算法'); n++; }
+    if(r.book && !api.tasksOn(r.date).some(t=>t.title===r.book)){ api.addTask(r.date, r.book, '其他'); n++; }
+  });
+  toast(`已加入 ${n} 条任务（技能+课本）`);
 };
 function renderCal(v){
   const sel = UI.calSel;
@@ -992,16 +1059,28 @@ function renderMe(v){
         <div class="sub">加权 GPA · 平均分 ${avg} · 已录学分 ${credits}</div>
       </div>
       <h2>课程成绩</h2>
-      ${S.courses.map(c=>`<div class="card">
-        <div class="row">
-          <div class="grow"><b>${esc(c.name)}</b><div class="sub">${c.credit} 学分</div></div>
-          <b style="color:${c.score!=null&&c.score!==''?'var(--tint)':'var(--sub)'};margin-right:10px">${c.score!=null&&c.score!==''?c.score:'未录'}</b>
-          <button class="btn sm flat" onclick="editCourse('${c.id}')">✏️</button>
-        </div>
-      </div>`).join('')}
+      ${['skill','book'].map(k=>{
+        const t = TRACK_INFO[k];
+        const list = S.courses.filter(c=>(courseTrackOf(c.name)===k));
+        if(!list.length) return '';
+        const kGpa = trackGpa(list);
+        return `<div style="margin-bottom:4px">
+          <div class="row" style="margin:10px 0 6px">
+            <div class="grow"><b style="color:${t.color}">${t.icon} ${esc(t.name)}</b></div>
+            <span class="sub">${kGpa.credits} 学分 · GPA ${kGpa.gpa}</span>
+          </div>
+          ${list.map(c=>`<div class="card">
+            <div class="row">
+              <div class="grow"><b>${esc(c.name)}</b><div class="sub">${c.credit} 学分</div></div>
+              <b style="color:${c.score!=null&&c.score!==''?'var(--tint)':'var(--sub)'};margin-right:10px">${c.score!=null&&c.score!==''?c.score:'未录'}</b>
+              <button class="btn sm flat" onclick="editCourse('${c.id}')">✏️</button>
+            </div>
+          </div>`).join('')}
+        </div>`;
+      }).join('')}
       <button class="btn" style="width:100%" onclick="editCourse('')">➕ 添加课程</button>
       <div class="card" style="margin-top:12px;background:#F5F5F7">
-        <div class="sub">计分规则：90+→4.0，85→3.7，82→3.3，78→3.0，75→2.7，72→2.3，68→2.0，64→1.5，60→1.0（可按学院规则调整）</div>
+        <div class="sub">计分规则：90+→4.0，85→3.7，82→3.3，78→3.0，75→2.7，72→2.3，68→2.0，64→1.5，60→1.0<br/>技能线课程：Java、数据结构 ｜ 课本线课程：离散、概率论、汇编、AI数学、英语</div>
       </div>`;
   } else if(UI.meTab===1){
     const bySub={};
