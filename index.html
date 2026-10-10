@@ -209,35 +209,35 @@ function seed(){
     {stage:'大四',goals:['秋招 / 考研冲刺','毕设','奖状汇总进综测']},
   ];
   const tasks = [];
-  for(let i=0;i<14;i++){
-    const d = fmt(new Date(Date.now()+i*86400000));
-    [{t:'背六级单词 30min（不背单词App）',s:'英语'},
-     {t:'洛谷/力扣 刷题 1-2 道',s:'算法'},
-     {t:'数据结构复习（王道视频）',s:'数据结构'},
-     {t:'当日课程作业/预习',s:'其他'}].forEach((x,j)=>{
-      tasks.push({id:`${d}_${j}`,date:d,title:x.t,subject:x.s,done:false});
+  // 初始任务：预置 W1 本周安排 + 今天/明天固定动作
+  const wk1 = (typeof W_PLAN !== 'undefined' && W_PLAN[0]) ? W_PLAN[0] : null;
+  if(wk1){
+    weekDayRows(wk1).forEach(r=>{
+      if(r.task) tasks.push({id:uid(),date:r.date,title:r.task,subject:'其他',done:false});
     });
   }
-  [{t:'报名/确认蓝桥杯校选拔信息',s:'竞赛'},
-   {t:'力扣 hot100：数组 + 双指针',s:'408'},
-   {t:'csdiy.wiki 浏览本学期课程资源',s:'其他'}].forEach((x,j)=>{
-    tasks.push({id:`sp_${j}`,date:today(),title:x.t,subject:x.s,done:false});
-  });
+  // 每日固定动作（今天 + 明天）
+  for(let i=0;i<2;i++){
+    const dstr = fmt(new Date(Date.now()+i*86400000));
+    DAILY_CORE.forEach(c=>{
+      if(!tasks.some(t=>t.date===dstr && t.title===c.name)){
+        tasks.push({id:uid(),date:dstr,title:c.name,subject:c.subject,done:false});
+      }
+    });
+  }
   return {tasks,comps,courses,roadmap,wrongs:[],pomos:[],settings:{remind:true}};
 }
 
-/* ============ 计划定位（按日期自动找到当前第几周 / 今天该做什么） ============ */
-// 直接按每周的「实际起止日期」匹配，避免跨学期/寒假的推算误差
+/* ============ 计划定位（W 系列 · 从 2026-10-10 开始） ============ */
+// 直接按每周的「实际起止日期」匹配
 function parseWeekRange(w){
-  // "10.12–10.18" -> {sm,sd,em,ed}
-  const r = String(w.dateRange||'').replace(/[–—]/g,'-');
+  const r = String(w.d||'').replace(/[–—]/g,'-');
   const m = r.match(/(\d{1,2})\.(\d{1,2})\s*-\s*(\d{1,2})\.(\d{1,2})/);
   if(!m) return null;
   return {sm:+m[1],sd:+m[2],em:+m[3],ed:+m[4]};
 }
-// 学年横跨 2026-09 ~ 2027-05：9-12 月 = 2026，1-8 月 = 2027
+// 学年横跨 2026-10 ~ 2027-01：10-12 月 = 2026，1 月 = 2027
 function guessYear(month){ return month >= 9 ? 2026 : 2027; }
-// 把某周转换为真实起止 Date
 function weekStartDate(w){
   const rg = parseWeekRange(w); if(!rg) return null;
   return new Date(guessYear(rg.sm), rg.sm-1, rg.sd);
@@ -246,40 +246,63 @@ function weekEndDate(w){
   const rg = parseWeekRange(w); if(!rg) return null;
   return new Date(guessYear(rg.em), rg.em-1, rg.ed, 23,59,59);
 }
-// 核心：给定日期，落在哪一周（返回 PLAN_WEEKS 下标）
 function planWeekIndex(dateStr){
   const d = new Date(dateStr + 'T12:00:00');
   if (isNaN(d)) return -1;
-  for(let i=0;i<PLAN_WEEKS.length;i++){
-    const s = weekStartDate(PLAN_WEEKS[i]), e = weekEndDate(PLAN_WEEKS[i]);
+  for(let i=0;i<W_PLAN.length;i++){
+    const s = weekStartDate(W_PLAN[i]), e = weekEndDate(W_PLAN[i]);
     if(s && e && d >= s && d <= e) return i;
   }
   return -1;
 }
 function planWeekOf(dateStr){
   const i = planWeekIndex(dateStr);
-  return i >= 0 ? PLAN_WEEKS[i] : null;
+  return i >= 0 ? W_PLAN[i] : null;
 }
-// 今天在这一周里是第几天（0=周一 ... 6=周日），映射到 days 数组下标
+// 今天在一周里是第几天（0=周一 ... 6=周日）
 function todayDayIndex(dateStr){
-  const wd = new Date(dateStr + 'T12:00:00').getDay(); // 0=周日
+  const wd = new Date(dateStr + 'T12:00:00').getDay();
   return wd === 0 ? 6 : wd - 1;
 }
-// 该周 7 个真实日期（周一起）
+// 取某周某天的任务：优先用 dows（自定义星期映射），否则按标准周一~周日
+function taskOfDay(weekObj, dateStr){
+  if(!weekObj || !weekObj.tasks) return '';
+  const wd = new Date(dateStr + 'T12:00:00').getDay();
+  if(Array.isArray(weekObj.dows)){
+    const i = weekObj.dows.indexOf(wd);
+    return i >= 0 ? (weekObj.tasks[i] || '') : '';
+  }
+  const i = wd === 0 ? 6 : wd - 1;
+  return weekObj.tasks[i] || '';
+}
+// 该周每一天的 [日期, 星期名, 任务]
+function weekDayRows(weekObj){
+  const dates = weekDates(weekObj);
+  if(!dates) return [];
+  return dates.map(ds=>{
+    const wd = new Date(ds + 'T12:00:00').getDay();
+    return { date: ds, wdName: WEEK[wd], wdNum: wd, task: taskOfDay(weekObj, ds) };
+  });
+}
 function weekDates(weekObj){
   const s = weekStartDate(weekObj);
   if(!s) return null;
   return Array.from({length:7}, (_,k)=> fmt(new Date(s.getTime() + k*86400000)));
 }
-// 阶段进度
 function phaseProgress(){
   const idx = planWeekIndex(today());
-  const total = PLAN_WEEKS.length;
-  const done = idx < 0 ? (today() > fmt(weekStartDate(PLAN_WEEKS[total-1]||{})) ? total : 0) : idx;
+  const total = W_PLAN.length;
+  const done = idx < 0 ? 0 : idx;
   return { idx, total, done, pct: Math.min(100, Math.round(done/total*100)) };
 }
-function findPhase(name){
-  return PLAN_PHASES.find(p => name && name.startsWith(p.name.split('｜')[0])) || null;
+// 距下一个关键节点多少天
+function nextKeyDate(){
+  const t = today();
+  const up = KEY_DATES.filter(k=>k.date >= t).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!up.length) return null;
+  const k = up[0];
+  const days = Math.ceil((new Date(k.date+'T00:00:00') - new Date(t+'T00:00:00'))/86400000);
+  return { ...k, days };
 }
 
 /* ============ 数据层 ============ */
@@ -376,48 +399,71 @@ function renderToday(v){
     return `${pad(Math.floor(t/60))}:${pad(t%60)}`;
   };
 
-  // ===== 计划定位：今天在第几周、该做什么 =====
   const wk = planWeekOf(d);
   const di = todayDayIndex(d);
-  const ph = wk ? findPhase(wk.phase) : null;
   const prog = phaseProgress();
+  const nk = nextKeyDate();
+  const wdName = WEEK[new Date(d+'T12:00:00').getDay()];
+  const isWeekend = ['六','日'].includes(wdName);
+
+  // ===== 计划主体 =====
   let planBlock = '';
   if(wk){
-    const dates = weekDates(wk);
-    const todayTask = (wk.days && wk.days[di]) ? wk.days[di] : '';
-    const doneWeeks = PLAN_WEEKS.slice(0, planWeekIndex(d)).map(w=>w.week);
+    const todayTask = taskOfDay(wk, d);
+    const rows = weekDayRows(wk);
     planBlock = `
       <div class="hero">
-        <div class="ph">${esc(wk.phase)}</div>
-        <div class="ttl">第 ${esc(String(wk.week))} 周 · ${esc(wk.dateRange)}</div>
-        <div class="meta">${ph && ph.goal ? '🎯 ' + esc(ph.goal) : ''}</div>
-        <div class="meta" style="margin-top:6px">📌 本周里程碑：${esc(wk.milestone||'—')}</div>
+        <div class="ph">W${wk.w} · ${esc(wk.theme)}</div>
+        <div class="ttl">${esc(wk.d)} · 第 ${wk.w} 周</div>
+        <div class="meta">${nk ? `⏳ 距「${esc(nk.name)}」还有 <b>${nk.days}</b> 天` : '本学期计划已走完'}</div>
         <div class="pbar"><i style="width:${prog.pct}%"></i></div>
-        <div class="meta" style="margin-top:6px">学年进度 ${prog.pct}%（已过 ${prog.done}/${prog.total} 周）</div>
+        <div class="meta" style="margin-top:6px">学期进度 ${prog.pct}%（第 ${prog.done+1}/${prog.total} 周）</div>
       </div>
-      <h2>📖 今天（周${WEEK[new Date(d+'T00:00:00').getDay()]}）按计划要做</h2>
+
+      <div class="card" style="background:#FFF7E6">
+        <div class="sub">💡 ${esc(START_HINT)}</div>
+      </div>
+
+      <h2>📌 今天（周${wdName}）要做的</h2>
       <div class="card">
-        ${todayTask ? `
-          <div class="row" style="align-items:flex-start">
-            <div class="chk ${UI._planDone&&UI._planDone[d]?'on':''}" onclick="togglePlanToday('${d}')">${UI._planDone&&UI._planDone[d]?'✓':''}</div>
-            <div class="grow" style="font-size:15px;line-height:1.6">${esc(todayTask)}</div>
-          </div>
-          ${wk.days.filter((x,i)=>i!==di&&x).length? `<div class="sub" style="margin-top:10px">本周其余安排（${esc(wk.dateRange)}）</div>
-          ${wk.days.map((x,i)=> x? `<div class="wtask"><div class="dd">周${WEEK[(i+1)%7]}</div><div class="tx" style="${i===di?'color:var(--tint);font-weight:600':''}">${esc(x)}</div></div>`:'').join('')}` : ''}
-        ` : '<div class="sub">本周暂无逐日安排，见周计划页</div>'}
+        <div class="row" style="align-items:flex-start">
+          <div class="chk ${UI._planDone&&UI._planDone[d]?'on':''}" onclick="togglePlanToday('${d}')">${UI._planDone&&UI._planDone[d]?'✓':''}</div>
+          <div class="grow" style="font-size:15px;line-height:1.65">${esc(todayTask||'今天按「每日固定动作」执行即可')}</div>
+        </div>
+        <div style="margin-top:12px;padding-top:10px;border-top:.5px solid var(--sep)">
+          <div class="sub" style="margin-bottom:6px">🔁 每日固定动作（雷打不动）</div>
+          ${DAILY_CORE.map(c=>`<div class="wtask">
+            <div class="dd">${c.min}′</div>
+            <div class="tx">${esc(c.name)} <span class="sub">· ${esc(c.subject)}</span></div>
+          </div>`).join('')}
+          <div class="sub" style="margin-top:6px;text-align:right">合计约 ${(DAILY_CORE.reduce((a,c)=>a+c.min,0)/60).toFixed(1)} 小时</div>
+        </div>
+        <div class="kb" style="margin-top:12px">
+          <button class="btn" onclick="addTodayCore()">➕ 一键加入今日任务</button>
+          <button class="btn flat" onclick="addPlanTodayAsTask('${d}')">📌 存下今天这条</button>
+        </div>
       </div>
-      ${wk.resource ? `<div class="card" style="background:#F5F5F7"><div class="sub">🎬 本周推荐资源：${esc(wk.resource)}</div></div>` : ''}
-      <div class="kb">
-        <button class="btn flat" onclick="go('plan')">🗓 查看完整周计划</button>
-        <button class="btn flat" onclick="addPlanTodayAsTask('${d}')">➕ 存为今日任务</button>
+
+      <h2>📅 本周安排（W${wk.w}）</h2>
+      <div class="card">
+        ${rows.map(r=> r.task? `<div class="wtask">
+          <div class="dd">周${r.wdName}</div>
+          <div class="tx" style="${r.date===d?'color:var(--tint);font-weight:600':''}">${esc(r.task)}${r.date===d?' <span class="today-hl">今天</span>':''}</div>
+        </div>`:'').join('')}
+        <div class="ms">🎯 本周必达线：${esc(wk.must||'—')}</div>
+      </div>
+
+      <div class="card" style="background:#F0F7FF">
+        <div class="sub" style="margin-bottom:6px">⏱ 一周节奏参考</div>
+        ${WEEK_RHYTHM.map(r=>`<div style="font-size:13px;margin-top:5px"><b>${esc(r.day)}</b>：${esc(r.desc)}</div>`).join('')}
       </div>
     `;
   } else {
-    planBlock = `<div class="card" style="background:#FFF7E6"><div class="sub">当前日期不在学年计划范围（2026-09-21 ~ 2027-05-30）内，可在「周计划」页手动浏览任意一周。</div></div>`;
+    planBlock = `<div class="card" style="background:#FFF7E6"><div class="sub">今天不在计划区间（2026-10-10 ~ 2027-01-29）。去「周计划」页看看全部安排。</div></div>`;
   }
 
   v.innerHTML = `
-    <h1>👋 今日 · ${d.slice(5)}</h1>
+    <h1>👋 今日 · ${d.slice(5)} 周${wdName}</h1>
     <div class="stats">
       <div class="card"><div class="stat-n" style="color:var(--tint)">${done}/${tasks.length}</div><div class="stat-t">今日任务</div></div>
       <div class="card"><div class="stat-n" style="color:var(--orange)">${(min/60).toFixed(1)}h</div><div class="stat-t">专注时长</div></div>
@@ -432,7 +478,6 @@ function renderToday(v){
         <span class="pill ${p.preset===25?'on':''}" style="${p.preset===25?'background:var(--tint)':''}" onclick="setPreset(25)">25 / 5</span>
         <span class="pill ${p.preset===50?'on':''}" style="${p.preset===50?'background:var(--tint)':''}" onclick="setPreset(50)">50 / 10</span>
         <span class="pill" onclick="openCustomPomo()">自定义</span>
-        ${[15,45].includes(p.preset)?`<span class="pill on" style="background:var(--tint)">${p.preset} 分钟</span>`:''}
       </div>
       <div class="chips">
         ${['算法','英语','数据结构','Java','408'].map(s=>`
@@ -446,30 +491,37 @@ function renderToday(v){
       <div class="sub" style="margin-top:8px">完成自动计入专注时长与热力图</div>
     </div>
 
-    <h2>✅ 我的任务（${done}/${tasks.length}）</h2>
+    <h2>✅ 今日任务（${done}/${tasks.length}）</h2>
     <div class="card">
-      ${tasks.length? tasks.map(t=>taskRow(t)).join('') : '<div class="sub" style="text-align:center;padding:10px 0">还没有自定义任务，可把上面的计划「存为今日任务」</div>'}
+      ${tasks.length? tasks.map(t=>taskRow(t)).join('') : '<div class="sub" style="text-align:center;padding:10px 0">点上面「一键加入今日任务」快速开始</div>'}
     </div>
     <div class="kb">
       <button class="btn" onclick="openAddTask('${d}')">➕ 添加任务</button>
-      <button class="btn flat" onclick="copyYesterday()">📋 复制昨日任务</button>
+      <button class="btn flat" onclick="copyYesterday()">📋 复制昨日</button>
     </div>
 
     <h2>🏆 最近竞赛 / 考试</h2>
     ${nextComps(4)}
   `;
 }
-/* 计划完成勾选（存在 settings 里） */
 window.togglePlanToday = (d)=>{
   if(!S.settings.planDone) S.settings.planDone = {};
   S.settings.planDone[d] = !S.settings.planDone[d];
   UI._planDone = S.settings.planDone;
   persist();
 };
+window.addTodayCore = ()=>{
+  const d = today();
+  let n = 0;
+  DAILY_CORE.forEach(c=>{
+    if(!api.tasksOn(d).some(t=>t.title===c.name)){ api.addTask(d, c.name, c.subject); n++; }
+  });
+  toast(n? `已加入 ${n} 条固定任务` : '固定任务都已存在');
+};
 window.addPlanTodayAsTask = (d)=>{
-  const wk = planWeekOf(d); if(!wk) return toast('当前不在计划范围');
+  const wk = planWeekOf(d); if(!wk) return toast('当前不在计划区间');
   const di = todayDayIndex(d);
-  const txt = wk.days && wk.days[di];
+  const txt = wk.tasks && wk.tasks[di];
   if(!txt) return toast('本周今天没有安排');
   api.addTask(d, txt, '其他');
   toast('已加入今日任务');
@@ -576,97 +628,123 @@ window.copyYesterday = ()=>{
 
 /* ---------- 周计划 ---------- */
 function renderPlan(v){
-  const tabs = ['📅 36 周','🎯 阶段','📦 项目','🎬 资源'];
+  const tabs = ['📅 16 周','🎯 时间轴','🎬 资源'];
   const seg = `<div class="seg">${tabs.map((t,i)=>`<div class="${UI.planTab===i?'on':''}" onclick="setPlanTab(${i})">${t}</div>`).join('')}</div>`;
   const curIdx = planWeekIndex(today());
 
   if(UI.planTab===0){
     const openIdx = UI.planOpen==null ? curIdx : UI.planOpen;
-    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
+    v.innerHTML = `<h1>🗓 学习计划</h1>${seg}
       <div class="card" style="background:#EEF4FF">
-        <div class="sub">学年计划来源：你上传的《大二学年每周学习计划.xlsx》，共 32 周 + 4 周寒假特训。点任意一周展开逐日安排。</div>
+        <div class="sub">共 16 周（2026-10-10 → 2027-01-29），从今天开始。借鉴了你的 Excel 计划，但按真实起点重排：每天 3 件事，周末攻坚。</div>
       </div>
-      ${PLAN_WEEKS.map((w,i)=>{
+      ${W_PLAN.map((w,i)=>{
         const isOpen = i===openIdx, isCur = i===curIdx, passed = curIdx>=0 && i<curIdx;
-        const dates = weekDates(w);
-        const di = isCur ? todayDayIndex(today()) : -1;
+        const rows = weekDayRows(w);
         return `<div class="phase">
           <div class="hd" onclick="togglePlanWeek(${i})" style="${isCur?'border:2px solid var(--tint)':''}">
             <div class="grow">
-              <div class="nm">${passed?'✓ ':''}${esc(String(w.week))} 周${isCur?' <span style="color:var(--tint);font-size:12px">← 当前</span>':''}</div>
-              <div class="rg">${esc(w.dateRange)} · ${esc((w.phase||'').split('：')[0])}</div>
+              <div class="nm">${passed?'✓ ':''}W${w.w}${isCur?' <span style="color:var(--tint);font-size:12px">← 本周</span>':''}</div>
+              <div class="rg">${esc(w.d)} · ${esc(w.theme)}</div>
             </div>
             <span style="color:var(--sub)">${isOpen?'▲':'▼'}</span>
           </div>
           ${isOpen? `<div class="bd">
-            ${w.days.map((x,k)=> x? `<div class="wtask">
-              <div class="dd">周${WEEK[(k+1)%7]}</div>
-              <div class="tx" style="${k===di?'color:var(--tint);font-weight:600':''}">${esc(x)}${k===di?' <span class="today-hl">今天</span>':''}</div>
+            ${rows.map(r=> r.task? `<div class="wtask">
+              <div class="dd">周${r.wdName}</div>
+              <div class="tx" style="${r.date===today()?'color:var(--tint);font-weight:600':''}">${esc(r.task)}${r.date===today()?' <span class="today-hl">今天</span>':''}</div>
             </div>`:'').join('')}
-            ${w.milestone?`<div class="ms">🏁 ${esc(w.milestone)}</div>`:''}
-            ${w.resource?`<div class="sub" style="margin-top:8px">🎬 ${esc(w.resource)}</div>`:''}
-            ${dates?`<div style="margin-top:10px">
-              <button class="btn sm flat" onclick="addWeekToTasks(${i})">➕ 本周安排加入任务</button>
-            </div>`:''}
+            <div class="ms">🎯 必达线：${esc(w.must||'—')}</div>
+            <div style="margin-top:10px">
+              <button class="btn sm flat" onclick="addWeekToTasks(${i})">➕ 本周加入任务</button>
+            </div>
           </div>`:''}
         </div>`;
       }).join('')}`;
   } else if(UI.planTab===1){
     const prog = phaseProgress();
-    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
+    v.innerHTML = `<h1>🗓 学习计划</h1>${seg}
       <div class="card" style="background:#EEF4FF">
-        <div class="sub">学年总进度：已过 ${prog.done} / ${prog.total} 周（${prog.pct}%）</div>
+        <div class="sub">学期总进度：${prog.done} / ${prog.total} 周（${prog.pct}%）</div>
         <div class="bar" style="background:#D6E4F5"><i style="width:${prog.pct}%;background:var(--tint)"></i></div>
       </div>
-      ${PLAN_PHASES.map((p,i)=>{
-        const curPh = PLAN_WEEKS[curIdx] && PLAN_WEEKS[curIdx].phase;
-        const isCur = curPh && curPh.startsWith(p.name.split('｜')[0]);
+      <h2>关键时间节点</h2>
+      ${KEY_DATES.map(k=>{
+        const isPast = k.date < today();
+        const days = Math.ceil((new Date(k.date+'T00:00:00') - new Date(today()+'T00:00:00'))/86400000);
+        const col = k.type==='exam'?'var(--red)':k.type==='deadline'?'var(--orange)':k.type==='start'?'var(--green)':'var(--tint)';
+        return `<div class="card" style="border-left:4px solid ${col};${isPast?'opacity:.5':''}">
+          <div class="row">
+            <div class="grow"><b>${esc(k.name)}</b><div class="sub">${k.date}</div></div>
+            <span class="tag" style="background:${col}">${isPast?'已过':days===0?'今天':'还有'+days+'天'}</span>
+          </div>
+        </div>`;
+      }).join('')}
+      <h2>每日固定动作</h2>
+      <div class="card">
+        ${DAILY_CORE.map(c=>`<div class="wtask"><div class="dd">${c.min}′</div><div class="tx">${esc(c.name)} <span class="sub">· ${esc(c.subject)}</span></div></div>`).join('')}
+        <div class="sub" style="margin-top:8px;text-align:right">合计约 ${(DAILY_CORE.reduce((a,c)=>a+c.min,0)/60).toFixed(1)} 小时 / 天</div>
+      </div>
+      <h2>一周节奏</h2>
+      <div class="card">
+        ${WEEK_RHYTHM.map(r=>`<div style="font-size:14px;margin-top:8px"><b>${esc(r.day)}</b><div class="sub" style="margin-top:3px">${esc(r.desc)}</div></div>`).join('')}
+      </div>
+      <h2>16 周主题一览</h2>
+      ${W_PLAN.map((w,i)=>{
+        const isCur = i===curIdx;
         return `<div class="card" style="${isCur?'border:2px solid var(--tint)':''}">
-          <div class="row"><div class="grow">
-            <b style="font-size:15px">${esc(p.name)}</b>
-            <div class="sub" style="margin-top:3px">${esc(p.range)} · ${esc(p.weeks)}</div>
-          </div>${isCur?'<span class="tag" style="background:var(--tint)">当前</span>':''}</div>
-          <div style="font-size:14px;margin-top:8px;line-height:1.6">📚 ${esc(p.theme)}</div>
-          <div style="font-size:14px;margin-top:4px;line-height:1.6">🎯 ${esc(p.goal)}</div>
-          ${p.project && p.project!=='无（调研+试学）'?`<div class="sub" style="margin-top:6px">📦 主项目：${esc(p.project)}</div>`:''}
+          <div class="row"><div class="grow"><b>W${w.w}</b> <span class="sub">${esc(w.d)}</span>
+          <div style="font-size:14px;margin-top:5px">${esc(w.theme)}</div></div>${isCur?'<span class="tag" style="background:var(--tint)">本周</span>':''}</div>
+          <div class="sub" style="margin-top:6px">🎯 ${esc(w.must)}</div>
         </div>`;
       }).join('')}`;
-  } else if(UI.planTab===2){
-    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
-      <h2>全学年项目清单（5 个）</h2>
-      ${PLAN_PROJECTS.map(p=>`<div class="card">
-        <div class="row"><div class="grow"><b>${esc(p.name)}</b>
-        <div class="sub" style="margin-top:3px">${esc(p.phase)}</div></div></div>
-        <div style="font-size:13px;margin-top:8px"><b>技术栈：</b>${esc(p.stack)}</div>
-        <div style="font-size:13px;margin-top:4px"><b>目标：</b>${esc(p.goal)}</div>
-        <div style="font-size:13px;margin-top:4px"><b>检查点：</b>${esc(p.checkpoint)}</div>
-        ${p.github?`<div class="sub" style="margin-top:6px">💡 ${esc(p.github)}</div>`:''}
-      </div>`).join('')}`;
   } else {
-    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
-      <h2>推荐博主 / 资源（${PLAN_RESOURCES.length} 个）</h2>
+    v.innerHTML = `<h1>🗓 学习计划</h1>${seg}
+      <h2>视频课程（按优先级）</h2>
       <div class="card">
-        ${PLAN_RESOURCES.map(r=>`<div class="rescard">
+        <div style="font-size:14px;line-height:1.9">
+          <b>🅰 现在就要看</b><br/>
+          1. <b>浙大翁恺《C语言》</b>（B站）— W1-W3 打语法基础<br/>
+          2. <b>青岛大学王卓《数据结构》</b>（B站）— W3 起，讲得细<br/>
+          3. <b>代码随想录</b>（programmercarl.com + B站）— W6 起刷题路线<br/>
+          <b>🅱 寒假前后看</b><br/>
+          4. 王道《操作系统》《计算机网络》（B站）— W11 起<br/>
+          5. 跟李沐学AI《动手学深度学习》（B站）— W16 寒假<br/>
+          6. CS50（Harvard）— W16 寒假通识<br/>
+          <b>英语六级</b><br/>
+          刘晓艳《六级写作》/ 石雷鹏作文模板（B站）+ 不背单词 App
+        </div>
+      </div>
+      <h2>刷题平台</h2>
+      <div class="card">
+        <div style="font-size:14px;line-height:2">
+          🥇 <a href="https://www.luogu.com.cn" target="_blank"><b>洛谷</b></a> — 主力，从【新手村】开始<br/>
+          🥈 <a href="https://leetcode.cn" target="_blank"><b>力扣</b></a> — 配合课程刷 hot100<br/>
+          🏆 <a href="https://www.lanqiao.cn" target="_blank"><b>蓝桥杯</b></a> — W4 起做真题<br/>
+          🎓 <a href="https://pintia.cn" target="_blank"><b>PTA</b></a> — 天梯赛<br/>
+          🗺 <a href="https://csdiy.wiki" target="_blank"><b>csdiy.wiki</b></a> — 自学地图
+        </div>
+      </div>
+      <h2>推荐博主（借鉴自你的 Excel）</h2>
+      <div class="card">
+        ${RESOURCES.map(r=>`<div class="rescard">
           <div class="grow">
             <div class="rn">${esc(r.name)}</div>
             <div class="rp">${esc(r.platform)}</div>
             <div class="rt">${esc(r.topic)}</div>
-            <div class="rt">适用：${esc(r.stage)}${r.note?' · '+esc(r.note):''}</div>
           </div>
         </div>`).join('')}
-      </div>
-      <div class="card" style="background:#EEF4FF">
-        <div class="sub">🗺 自学地图：<a href="https://csdiy.wiki" target="_blank">csdiy.wiki</a> ｜ 🧩 刷题：<a href="https://www.luogu.com.cn" target="_blank">洛谷</a> · <a href="https://leetcode.cn" target="_blank">力扣</a> · <a href="https://www.lanqiao.cn" target="_blank">蓝桥杯</a> · <a href="https://pintia.cn" target="_blank">PTA</a></div>
       </div>`;
   }
 }
 window.setPlanTab = (i)=>{ UI.planTab=i; draw(); };
 window.togglePlanWeek = (i)=>{ UI.planOpen = (UI.planOpen===i? -1 : i); draw(); };
 window.addWeekToTasks = (i)=>{
-  const w = PLAN_WEEKS[i]; const dates = weekDates(w);
-  if(!dates) return toast('无法解析该周日期');
+  const w = W_PLAN[i];
+  const rows = weekDayRows(w);
+  if(!rows.length) return toast('无法解析该周日期');
   let n=0;
-  w.days.forEach((x,k)=>{ if(x && dates[k]){ api.addTask(dates[k], x, '其他'); n++; } });
+  rows.forEach(r=>{ if(r.task){ api.addTask(r.date, r.task, '其他'); n++; } });
   toast(`已加入 ${n} 条任务`);
 };
 function renderCal(v){
@@ -757,16 +835,20 @@ function renderGoals(v){
       </div>`;
   } else {
     const curIdx = planWeekIndex(today());
-    const curPh = PLAN_WEEKS[curIdx] ? PLAN_WEEKS[curIdx].phase : '';
-    v.innerHTML = `<h1>🎯 目标</h1>${seg}<h2>大二学年路线图（来自你的计划表）</h2>
-      ${PLAN_PHASES.map((p,i)=>{
-        const isCur = curPh && curPh.startsWith(p.name.split('｜')[0]);
+    v.innerHTML = `<h1>🎯 目标</h1>${seg}<h2>本学期主线（16 周）</h2>
+      <div class="card" style="background:#EEF4FF">
+        <div class="sub">从 2026-10-10 开始，到 2027-01-29 结束。三条主线并行：<br/>
+        ① <b>算法竞赛</b>：洛谷刷题 → 11月蓝桥杯报名 → 寒假省赛<br/>
+        ② <b>CET-6</b>：每天背词 → 11月起真题 → 12/19 考试<br/>
+        ③ <b>课程 GPA</b>：Java / 数据结构 / 离散数学 / 概率论 + 期末冲刺</div>
+      </div>
+      ${W_PLAN.map((w,i)=>{
+        const isCur = i===curIdx;
         return `<div class="card" style="border-left:4px solid ${isCur?'var(--tint)':'var(--sep)'}">
-          <div class="row"><div class="grow"><b>${esc(p.name)}</b>
-          <div class="sub" style="margin-top:3px">${esc(p.range)} · ${esc(p.weeks)}</div></div>
-          ${isCur?'<span class="tag" style="background:var(--tint)">当前</span>':''}</div>
-          <div style="font-size:14px;margin-top:8px;line-height:1.6">📚 ${esc(p.theme)}</div>
-          <div style="font-size:14px;margin-top:4px;line-height:1.6">🎯 ${esc(p.goal)}</div>
+          <div class="row"><div class="grow"><b>W${w.w}</b> <span class="sub">${esc(w.d)}</span>
+          <div style="font-size:14px;margin-top:5px">${esc(w.theme)}</div></div>
+          ${isCur?'<span class="tag" style="background:var(--tint)">本周</span>':''}</div>
+          <div class="sub" style="margin-top:6px">🎯 必达线：${esc(w.must)}</div>
         </div>`;
       }).join('')}
       <h2>大三 / 大四展望</h2>
@@ -775,7 +857,7 @@ function renderGoals(v){
         ${r.goals.map(g=>`<div style="font-size:14px;margin-top:6px">• ${esc(g)}</div>`).join('')}
       </div>`).join('')}
       <div class="card" style="background:#EEF4FF">
-        <div class="sub">📌 竞赛与计划并行：Excel 计划走"项目驱动"主线（博客→算法可视化→HTTP服务器→RAG），竞赛（蓝桥杯/天梯赛）作为综测补充，见「竞赛」页。</div>
+        <div class="sub">📌 Excel 原计划是"理想蓝图"，从未执行。本网页已按真实起点（今天、零基础）重排，每天只做 3 件事，先跑起来比什么都重要。</div>
       </div>`;
   }
 }
