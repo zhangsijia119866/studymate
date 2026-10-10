@@ -113,6 +113,33 @@
   .toast.on{opacity:1}
   .kb{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .kb .btn{width:100%}
+  /* 今日计划卡 */
+  .hero{background:linear-gradient(135deg,#0A84FF,#5AC8FA);color:#fff;border-radius:16px;padding:16px;margin-bottom:12px}
+  .hero .ph{font-size:12px;opacity:.9;font-weight:600}
+  .hero .ttl{font-size:19px;font-weight:800;margin:4px 0 8px}
+  .hero .meta{font-size:12px;opacity:.92}
+  .pbar{height:6px;background:rgba(255,255,255,.3);border-radius:3px;overflow:hidden;margin-top:10px}
+  .pbar>i{display:block;height:100%;background:#fff;border-radius:3px}
+  /* 周计划 */
+  .phase{margin-bottom:10px}
+  .phase .hd{display:flex;align-items:center;padding:12px 14px;background:#fff;border-radius:14px;cursor:pointer}
+  .phase .hd .nm{font-weight:700;font-size:15px}
+  .phase .hd .rg{font-size:12px;color:var(--sub);margin-top:2px}
+  .phase .bd{background:#fff;border-radius:0 0 14px 14px;margin-top:-6px;padding:12px 14px 14px;border-top:1px solid var(--sep)}
+  .wtask{display:flex;align-items:flex-start;padding:8px 0;border-bottom:.5px solid var(--sep)}
+  .wtask:last-child{border-bottom:none}
+  .wtask .dd{width:34px;flex:none;font-size:12px;color:var(--tint);font-weight:700;padding-top:2px}
+  .wtask .tx{flex:1;font-size:14px;line-height:1.5}
+  .today-hl{background:#FFF7E6;border-radius:8px;padding:2px 6px;font-weight:600}
+  .ms{background:#EEF4FF;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;color:#1C4E8A}
+  .rescard{display:flex;align-items:flex-start;padding:10px 0;border-bottom:.5px solid var(--sep)}
+  .rescard:last-child{border-bottom:none}
+  .rescard .rn{font-weight:600;font-size:14px}
+  .rescard .rp{font-size:12px;color:var(--tint);margin-top:2px}
+  .rescard .rt{font-size:12px;color:var(--sub);margin-top:3px;line-height:1.5}
+  .wchip{display:inline-block;padding:4px 10px;border-radius:12px;font-size:12px;background:var(--sep);color:var(--text);margin:0 6px 6px 0;cursor:pointer}
+  .wchip.on{background:var(--tint);color:#fff}
+  .wchip.done{background:#D1F2DC;color:#1B7A3D}
 </style>
 </head>
 <body>
@@ -124,6 +151,7 @@
 <div class="mask" id="mask"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
 
+<script src="./plan-data.js"></script>
 <script>
 /* ============ 常量 ============ */
 const KEY = 'studymate_web_v1';
@@ -132,6 +160,7 @@ const SUBCOLOR = {'算法':'#0A84FF','英语':'#FF3B30','数据结构':'#34C759'
 const WEEK = ['日','一','二','三','四','五','六'];
 const TABS = [
   {key:'today', label:'今日', icon:'🏠'},
+  {key:'plan',  label:'周计划', icon:'🗓'},
   {key:'cal',   label:'日历', icon:'📅'},
   {key:'goals', label:'目标', icon:'🎯'},
   {key:'heat',  label:'热力图', icon:'📈'},
@@ -197,6 +226,62 @@ function seed(){
   return {tasks,comps,courses,roadmap,wrongs:[],pomos:[],settings:{remind:true}};
 }
 
+/* ============ 计划定位（按日期自动找到当前第几周 / 今天该做什么） ============ */
+// 直接按每周的「实际起止日期」匹配，避免跨学期/寒假的推算误差
+function parseWeekRange(w){
+  // "10.12–10.18" -> {sm,sd,em,ed}
+  const r = String(w.dateRange||'').replace(/[–—]/g,'-');
+  const m = r.match(/(\d{1,2})\.(\d{1,2})\s*-\s*(\d{1,2})\.(\d{1,2})/);
+  if(!m) return null;
+  return {sm:+m[1],sd:+m[2],em:+m[3],ed:+m[4]};
+}
+// 学年横跨 2026-09 ~ 2027-05：9-12 月 = 2026，1-8 月 = 2027
+function guessYear(month){ return month >= 9 ? 2026 : 2027; }
+// 把某周转换为真实起止 Date
+function weekStartDate(w){
+  const rg = parseWeekRange(w); if(!rg) return null;
+  return new Date(guessYear(rg.sm), rg.sm-1, rg.sd);
+}
+function weekEndDate(w){
+  const rg = parseWeekRange(w); if(!rg) return null;
+  return new Date(guessYear(rg.em), rg.em-1, rg.ed, 23,59,59);
+}
+// 核心：给定日期，落在哪一周（返回 PLAN_WEEKS 下标）
+function planWeekIndex(dateStr){
+  const d = new Date(dateStr + 'T12:00:00');
+  if (isNaN(d)) return -1;
+  for(let i=0;i<PLAN_WEEKS.length;i++){
+    const s = weekStartDate(PLAN_WEEKS[i]), e = weekEndDate(PLAN_WEEKS[i]);
+    if(s && e && d >= s && d <= e) return i;
+  }
+  return -1;
+}
+function planWeekOf(dateStr){
+  const i = planWeekIndex(dateStr);
+  return i >= 0 ? PLAN_WEEKS[i] : null;
+}
+// 今天在这一周里是第几天（0=周一 ... 6=周日），映射到 days 数组下标
+function todayDayIndex(dateStr){
+  const wd = new Date(dateStr + 'T12:00:00').getDay(); // 0=周日
+  return wd === 0 ? 6 : wd - 1;
+}
+// 该周 7 个真实日期（周一起）
+function weekDates(weekObj){
+  const s = weekStartDate(weekObj);
+  if(!s) return null;
+  return Array.from({length:7}, (_,k)=> fmt(new Date(s.getTime() + k*86400000)));
+}
+// 阶段进度
+function phaseProgress(){
+  const idx = planWeekIndex(today());
+  const total = PLAN_WEEKS.length;
+  const done = idx < 0 ? (today() > fmt(weekStartDate(PLAN_WEEKS[total-1]||{})) ? total : 0) : idx;
+  return { idx, total, done, pct: Math.min(100, Math.round(done/total*100)) };
+}
+function findPhase(name){
+  return PLAN_PHASES.find(p => name && name.startsWith(p.name.split('｜')[0])) || null;
+}
+
 /* ============ 数据层 ============ */
 let S = null;
 function load(){
@@ -245,6 +330,8 @@ const UI = {
   calSel: today(),
   goalsTab:0,
   meTab:0,
+  planTab:0,
+  planOpen:null,
   pomo:{ preset:25, left:0, running:false, subject:'算法', base:0 },
   pomoTimer:null,
 };
@@ -262,6 +349,7 @@ function draw(){
   const v = $('view');
   v.scrollTop = v.scrollTop; // 保持
   if(UI.tab==='today') renderToday(v);
+  if(UI.tab==='plan') renderPlan(v);
   if(UI.tab==='cal') renderCal(v);
   if(UI.tab==='goals') renderGoals(v);
   if(UI.tab==='heat') renderHeat(v);
@@ -287,6 +375,47 @@ function renderToday(v){
     const t = p.left>0 ? p.left : p.preset*60;
     return `${pad(Math.floor(t/60))}:${pad(t%60)}`;
   };
+
+  // ===== 计划定位：今天在第几周、该做什么 =====
+  const wk = planWeekOf(d);
+  const di = todayDayIndex(d);
+  const ph = wk ? findPhase(wk.phase) : null;
+  const prog = phaseProgress();
+  let planBlock = '';
+  if(wk){
+    const dates = weekDates(wk);
+    const todayTask = (wk.days && wk.days[di]) ? wk.days[di] : '';
+    const doneWeeks = PLAN_WEEKS.slice(0, planWeekIndex(d)).map(w=>w.week);
+    planBlock = `
+      <div class="hero">
+        <div class="ph">${esc(wk.phase)}</div>
+        <div class="ttl">第 ${esc(String(wk.week))} 周 · ${esc(wk.dateRange)}</div>
+        <div class="meta">${ph && ph.goal ? '🎯 ' + esc(ph.goal) : ''}</div>
+        <div class="meta" style="margin-top:6px">📌 本周里程碑：${esc(wk.milestone||'—')}</div>
+        <div class="pbar"><i style="width:${prog.pct}%"></i></div>
+        <div class="meta" style="margin-top:6px">学年进度 ${prog.pct}%（已过 ${prog.done}/${prog.total} 周）</div>
+      </div>
+      <h2>📖 今天（周${WEEK[new Date(d+'T00:00:00').getDay()]}）按计划要做</h2>
+      <div class="card">
+        ${todayTask ? `
+          <div class="row" style="align-items:flex-start">
+            <div class="chk ${UI._planDone&&UI._planDone[d]?'on':''}" onclick="togglePlanToday('${d}')">${UI._planDone&&UI._planDone[d]?'✓':''}</div>
+            <div class="grow" style="font-size:15px;line-height:1.6">${esc(todayTask)}</div>
+          </div>
+          ${wk.days.filter((x,i)=>i!==di&&x).length? `<div class="sub" style="margin-top:10px">本周其余安排（${esc(wk.dateRange)}）</div>
+          ${wk.days.map((x,i)=> x? `<div class="wtask"><div class="dd">周${WEEK[(i+1)%7]}</div><div class="tx" style="${i===di?'color:var(--tint);font-weight:600':''}">${esc(x)}</div></div>`:'').join('')}` : ''}
+        ` : '<div class="sub">本周暂无逐日安排，见周计划页</div>'}
+      </div>
+      ${wk.resource ? `<div class="card" style="background:#F5F5F7"><div class="sub">🎬 本周推荐资源：${esc(wk.resource)}</div></div>` : ''}
+      <div class="kb">
+        <button class="btn flat" onclick="go('plan')">🗓 查看完整周计划</button>
+        <button class="btn flat" onclick="addPlanTodayAsTask('${d}')">➕ 存为今日任务</button>
+      </div>
+    `;
+  } else {
+    planBlock = `<div class="card" style="background:#FFF7E6"><div class="sub">当前日期不在学年计划范围（2026-09-21 ~ 2027-05-30）内，可在「周计划」页手动浏览任意一周。</div></div>`;
+  }
+
   v.innerHTML = `
     <h1>👋 今日 · ${d.slice(5)}</h1>
     <div class="stats">
@@ -295,7 +424,9 @@ function renderToday(v){
       <div class="card"><div class="stat-n" style="color:var(--red)">${st}🔥</div><div class="stat-t">连续天数</div></div>
     </div>
 
-    <h2>番茄钟</h2>
+    ${planBlock}
+
+    <h2>🍅 番茄钟</h2>
     <div class="card pomo">
       <div class="chips">
         <span class="pill ${p.preset===25?'on':''}" style="${p.preset===25?'background:var(--tint)':''}" onclick="setPreset(25)">25 / 5</span>
@@ -315,19 +446,34 @@ function renderToday(v){
       <div class="sub" style="margin-top:8px">完成自动计入专注时长与热力图</div>
     </div>
 
-    <h2>今日任务（${done}/${tasks.length}）</h2>
+    <h2>✅ 我的任务（${done}/${tasks.length}）</h2>
     <div class="card">
-      ${tasks.length? tasks.map(t=>taskRow(t)).join('') : '<div class="sub" style="text-align:center;padding:10px 0">今天还没有任务，点下面添加</div>'}
+      ${tasks.length? tasks.map(t=>taskRow(t)).join('') : '<div class="sub" style="text-align:center;padding:10px 0">还没有自定义任务，可把上面的计划「存为今日任务」</div>'}
     </div>
     <div class="kb">
       <button class="btn" onclick="openAddTask('${d}')">➕ 添加任务</button>
       <button class="btn flat" onclick="copyYesterday()">📋 复制昨日任务</button>
     </div>
 
-    <h2>最近竞赛 / 考试</h2>
+    <h2>🏆 最近竞赛 / 考试</h2>
     ${nextComps(4)}
   `;
 }
+/* 计划完成勾选（存在 settings 里） */
+window.togglePlanToday = (d)=>{
+  if(!S.settings.planDone) S.settings.planDone = {};
+  S.settings.planDone[d] = !S.settings.planDone[d];
+  UI._planDone = S.settings.planDone;
+  persist();
+};
+window.addPlanTodayAsTask = (d)=>{
+  const wk = planWeekOf(d); if(!wk) return toast('当前不在计划范围');
+  const di = todayDayIndex(d);
+  const txt = wk.days && wk.days[di];
+  if(!txt) return toast('本周今天没有安排');
+  api.addTask(d, txt, '其他');
+  toast('已加入今日任务');
+};
 function taskRow(t){
   return `<div class="tr">
     <div class="chk ${t.done?'on':''}" onclick="api.toggleTask('${t.id}')">${t.done?'✓':''}</div>
@@ -428,7 +574,101 @@ window.copyYesterday = ()=>{
   persist(); toast(`已复制 ${src.length} 条`);
 };
 
-/* ---------- 日历 ---------- */
+/* ---------- 周计划 ---------- */
+function renderPlan(v){
+  const tabs = ['📅 36 周','🎯 阶段','📦 项目','🎬 资源'];
+  const seg = `<div class="seg">${tabs.map((t,i)=>`<div class="${UI.planTab===i?'on':''}" onclick="setPlanTab(${i})">${t}</div>`).join('')}</div>`;
+  const curIdx = planWeekIndex(today());
+
+  if(UI.planTab===0){
+    const openIdx = UI.planOpen==null ? curIdx : UI.planOpen;
+    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
+      <div class="card" style="background:#EEF4FF">
+        <div class="sub">学年计划来源：你上传的《大二学年每周学习计划.xlsx》，共 32 周 + 4 周寒假特训。点任意一周展开逐日安排。</div>
+      </div>
+      ${PLAN_WEEKS.map((w,i)=>{
+        const isOpen = i===openIdx, isCur = i===curIdx, passed = curIdx>=0 && i<curIdx;
+        const dates = weekDates(w);
+        const di = isCur ? todayDayIndex(today()) : -1;
+        return `<div class="phase">
+          <div class="hd" onclick="togglePlanWeek(${i})" style="${isCur?'border:2px solid var(--tint)':''}">
+            <div class="grow">
+              <div class="nm">${passed?'✓ ':''}${esc(String(w.week))} 周${isCur?' <span style="color:var(--tint);font-size:12px">← 当前</span>':''}</div>
+              <div class="rg">${esc(w.dateRange)} · ${esc((w.phase||'').split('：')[0])}</div>
+            </div>
+            <span style="color:var(--sub)">${isOpen?'▲':'▼'}</span>
+          </div>
+          ${isOpen? `<div class="bd">
+            ${w.days.map((x,k)=> x? `<div class="wtask">
+              <div class="dd">周${WEEK[(k+1)%7]}</div>
+              <div class="tx" style="${k===di?'color:var(--tint);font-weight:600':''}">${esc(x)}${k===di?' <span class="today-hl">今天</span>':''}</div>
+            </div>`:'').join('')}
+            ${w.milestone?`<div class="ms">🏁 ${esc(w.milestone)}</div>`:''}
+            ${w.resource?`<div class="sub" style="margin-top:8px">🎬 ${esc(w.resource)}</div>`:''}
+            ${dates?`<div style="margin-top:10px">
+              <button class="btn sm flat" onclick="addWeekToTasks(${i})">➕ 本周安排加入任务</button>
+            </div>`:''}
+          </div>`:''}
+        </div>`;
+      }).join('')}`;
+  } else if(UI.planTab===1){
+    const prog = phaseProgress();
+    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
+      <div class="card" style="background:#EEF4FF">
+        <div class="sub">学年总进度：已过 ${prog.done} / ${prog.total} 周（${prog.pct}%）</div>
+        <div class="bar" style="background:#D6E4F5"><i style="width:${prog.pct}%;background:var(--tint)"></i></div>
+      </div>
+      ${PLAN_PHASES.map((p,i)=>{
+        const curPh = PLAN_WEEKS[curIdx] && PLAN_WEEKS[curIdx].phase;
+        const isCur = curPh && curPh.startsWith(p.name.split('｜')[0]);
+        return `<div class="card" style="${isCur?'border:2px solid var(--tint)':''}">
+          <div class="row"><div class="grow">
+            <b style="font-size:15px">${esc(p.name)}</b>
+            <div class="sub" style="margin-top:3px">${esc(p.range)} · ${esc(p.weeks)}</div>
+          </div>${isCur?'<span class="tag" style="background:var(--tint)">当前</span>':''}</div>
+          <div style="font-size:14px;margin-top:8px;line-height:1.6">📚 ${esc(p.theme)}</div>
+          <div style="font-size:14px;margin-top:4px;line-height:1.6">🎯 ${esc(p.goal)}</div>
+          ${p.project && p.project!=='无（调研+试学）'?`<div class="sub" style="margin-top:6px">📦 主项目：${esc(p.project)}</div>`:''}
+        </div>`;
+      }).join('')}`;
+  } else if(UI.planTab===2){
+    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
+      <h2>全学年项目清单（5 个）</h2>
+      ${PLAN_PROJECTS.map(p=>`<div class="card">
+        <div class="row"><div class="grow"><b>${esc(p.name)}</b>
+        <div class="sub" style="margin-top:3px">${esc(p.phase)}</div></div></div>
+        <div style="font-size:13px;margin-top:8px"><b>技术栈：</b>${esc(p.stack)}</div>
+        <div style="font-size:13px;margin-top:4px"><b>目标：</b>${esc(p.goal)}</div>
+        <div style="font-size:13px;margin-top:4px"><b>检查点：</b>${esc(p.checkpoint)}</div>
+        ${p.github?`<div class="sub" style="margin-top:6px">💡 ${esc(p.github)}</div>`:''}
+      </div>`).join('')}`;
+  } else {
+    v.innerHTML = `<h1>🗓 周计划</h1>${seg}
+      <h2>推荐博主 / 资源（${PLAN_RESOURCES.length} 个）</h2>
+      <div class="card">
+        ${PLAN_RESOURCES.map(r=>`<div class="rescard">
+          <div class="grow">
+            <div class="rn">${esc(r.name)}</div>
+            <div class="rp">${esc(r.platform)}</div>
+            <div class="rt">${esc(r.topic)}</div>
+            <div class="rt">适用：${esc(r.stage)}${r.note?' · '+esc(r.note):''}</div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="card" style="background:#EEF4FF">
+        <div class="sub">🗺 自学地图：<a href="https://csdiy.wiki" target="_blank">csdiy.wiki</a> ｜ 🧩 刷题：<a href="https://www.luogu.com.cn" target="_blank">洛谷</a> · <a href="https://leetcode.cn" target="_blank">力扣</a> · <a href="https://www.lanqiao.cn" target="_blank">蓝桥杯</a> · <a href="https://pintia.cn" target="_blank">PTA</a></div>
+      </div>`;
+  }
+}
+window.setPlanTab = (i)=>{ UI.planTab=i; draw(); };
+window.togglePlanWeek = (i)=>{ UI.planOpen = (UI.planOpen===i? -1 : i); draw(); };
+window.addWeekToTasks = (i)=>{
+  const w = PLAN_WEEKS[i]; const dates = weekDates(w);
+  if(!dates) return toast('无法解析该周日期');
+  let n=0;
+  w.days.forEach((x,k)=>{ if(x && dates[k]){ api.addTask(dates[k], x, '其他'); n++; } });
+  toast(`已加入 ${n} 条任务`);
+};
 function renderCal(v){
   const sel = UI.calSel;
   const d = new Date(sel+'T00:00:00');
@@ -516,25 +756,26 @@ function renderGoals(v){
         <div class="sub">💡 复习节奏：未复习 → 复习中 → 已掌握；建议错题隔 1 天 / 3 天 / 7 天各看一遍。</div>
       </div>`;
   } else {
-    v.innerHTML = `<h1>🎯 目标</h1>${seg}<h2>大学四年路线图</h2>
-      ${S.roadmap.map((r,i)=>`<div class="card" style="border-left:4px solid ${i===0?'var(--tint)':'var(--sep)'}">
+    const curIdx = planWeekIndex(today());
+    const curPh = PLAN_WEEKS[curIdx] ? PLAN_WEEKS[curIdx].phase : '';
+    v.innerHTML = `<h1>🎯 目标</h1>${seg}<h2>大二学年路线图（来自你的计划表）</h2>
+      ${PLAN_PHASES.map((p,i)=>{
+        const isCur = curPh && curPh.startsWith(p.name.split('｜')[0]);
+        return `<div class="card" style="border-left:4px solid ${isCur?'var(--tint)':'var(--sep)'}">
+          <div class="row"><div class="grow"><b>${esc(p.name)}</b>
+          <div class="sub" style="margin-top:3px">${esc(p.range)} · ${esc(p.weeks)}</div></div>
+          ${isCur?'<span class="tag" style="background:var(--tint)">当前</span>':''}</div>
+          <div style="font-size:14px;margin-top:8px;line-height:1.6">📚 ${esc(p.theme)}</div>
+          <div style="font-size:14px;margin-top:4px;line-height:1.6">🎯 ${esc(p.goal)}</div>
+        </div>`;
+      }).join('')}
+      <h2>大三 / 大四展望</h2>
+      ${S.roadmap.filter(r=>r.stage.includes('大三')||r.stage.includes('大四')).map(r=>`<div class="card">
         <b>${esc(r.stage)}</b>
         ${r.goals.map(g=>`<div style="font-size:14px;margin-top:6px">• ${esc(g)}</div>`).join('')}
       </div>`).join('')}
       <div class="card" style="background:#EEF4FF">
-        <div class="sub">本阶段主线：六级（12月）→ 蓝桥杯校选（11月报名）→ 省赛（3-4月）→ 暑假 408 数据结构 + 项目启动。</div>
-      </div>
-      <h2>学习资源速查</h2>
-      <div class="card">
-        <div style="font-size:14px;line-height:1.9">
-          🧩 刷题：<a href="https://www.luogu.com.cn" target="_blank">洛谷</a> ·
-          <a href="https://leetcode.cn" target="_blank">力扣</a> ·
-          <a href="https://www.lanqiao.cn" target="_blank">蓝桥杯练习系统</a> ·
-          <a href="https://pintia.cn" target="_blank">PTA 天梯赛</a><br/>
-          🎬 视频：浙大翁恺 C 语言 / 黑马 Java / 王卓数据结构 / 王道 408 / 代码随想录（B站）<br/>
-          🗺 自学地图：<a href="https://csdiy.wiki" target="_blank">csdiy.wiki</a><br/>
-          📖 英语：不背单词 / 墨墨 + 刘晓艳、石雷鹏（B站）
-        </div>
+        <div class="sub">📌 竞赛与计划并行：Excel 计划走"项目驱动"主线（博客→算法可视化→HTTP服务器→RAG），竞赛（蓝桥杯/天梯赛）作为综测补充，见「竞赛」页。</div>
       </div>`;
   }
 }
